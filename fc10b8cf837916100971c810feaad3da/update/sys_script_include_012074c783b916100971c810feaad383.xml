@@ -1,0 +1,290 @@
+<?xml version="1.0" encoding="UTF-8"?><record_update table="sys_script_include">
+    <sys_script_include action="INSERT_OR_UPDATE">
+        <access>package_private</access>
+        <active>true</active>
+        <api_name>global.scp_vars_Util</api_name>
+        <caller_access/>
+        <client_callable>false</client_callable>
+        <description/>
+        <mobile_callable>false</mobile_callable>
+        <name>scp_vars_Util</name>
+        <sandbox_callable>false</sandbox_callable>
+        <script><![CDATA[/* global Class, GlideRecord, GlideQueryString, GlideSysChoice, TableUtils, gs */
+/* eslint no-undef: "error" */
+var scp_vars_Util = Class.create();
+scp_vars_Util.prototype = {
+	initialize: function () {
+		this.item_limit = +gs.getProperty('scp_vars.schema_limit', '100');
+		this.choice_limit = this.item_limit;
+		var self = this;
+
+		// https://www.servicenow.com/docs/csh?topicname=dynamic-inputs.html&version=latest
+		//[29]Duration,[28]IP Address,[21]List Collector,[22]Lookup Multiple Choice,[18]Lookup Select Box,[4]Numeric Scale
+		this.cat_item_tables = new TableUtils('sc_cat_item').getAllExtensions();
+		this.variable_set_tables = new TableUtils('item_option_new_set').getAllExtensions();
+		this.handlers = {
+			// Yes / No
+			'1': function (itemOptionGr) {
+				return {
+					name: 'variables.' + itemOptionGr.getUniqueValue(),
+					label: itemOptionGr.getValue('question_text'),
+					type: 'choice',
+					choices: [{ label: 'Yes', value: 'yes' }, { label: 'No', value: 'no' }],
+					defaultValue: itemOptionGr.default_value.toString()
+				};
+			},
+			'2': StringHandler,  // Multi Line Text
+			'3': function (itemOptionGr) { // Multiple Choice
+				var choices = [];
+				if (itemOptionGr.include_none) {
+					choices.push({
+						label: '-- None --',
+						value: ''
+					});
+				}
+
+				var choiceGr = new GlideRecord('question_choice');
+				choiceGr.addQuery('question', itemOptionGr.sys_id);
+				choiceGr.addQuery('inactive', false);
+				choiceGr.setLimit(self.choice_limit);
+				choiceGr.orderBy('order');
+				choiceGr.query();
+				while (choiceGr.next()) {
+					choices.push({
+						label: choiceGr.getDisplayValue('text'),
+						value: choiceGr.value.toString()
+					});
+				}
+
+				return {
+					name: 'variables.' + itemOptionGr.getUniqueValue(),
+					label: itemOptionGr.getValue('question_text'),
+					type: 'choice',
+					choices: choices,
+					defaultValue: itemOptionGr.default_value.toString()
+				};
+			},
+			'5': function (itemOptionGr) { // Select Box
+				var choices = [];
+				if (itemOptionGr.include_none) {
+					choices.push({
+						label: '-- None --',
+						value: ''
+					});
+				}
+
+				if (itemOptionGr.choice_table && itemOptionGr.choice_field) {
+					var choiceGr = new GlideSysChoice(itemOptionGr.choice_table, itemOptionGr.choice_field).getChoices();
+					while (choiceGr && choiceGr.next()) {
+						choices.push({
+							label: choiceGr.getDisplayValue('label'),
+							value: choiceGr.value.toString(),
+						});
+					}
+				} else {
+					var choiceGr = new GlideRecord('question_choice');
+					choiceGr.addQuery('question', itemOptionGr.sys_id);
+					choiceGr.addQuery('inactive', false);
+					choiceGr.setLimit(self.choice_limit);
+					choiceGr.orderBy('order');
+					choiceGr.query();
+					while (choiceGr.next()) {
+						choices.push({
+							label: choiceGr.getDisplayValue('text'),
+							value: choiceGr.value.toString()
+						});
+					}
+				}
+
+				return {
+					name: 'variables.' + itemOptionGr.getUniqueValue(),
+					label: itemOptionGr.getValue('question_text'),
+					type: 'choice',
+					choices: choices,
+					defaultValue: itemOptionGr.default_value.toString()
+				};
+			},
+			'6': StringHandler,  // Single Line Text
+			'7': function (itemOptionGr) { // CheckBox
+				return {
+					name: 'variables.' + itemOptionGr.getUniqueValue(),
+					label: itemOptionGr.getValue('question_text'),
+					type: 'choice',
+					choices: [{ label: 'True', value: 'true' }, { label: 'False', value: 'false' }],
+					defaultValue: itemOptionGr.default_value.toString()
+				};
+			},
+			'8': function (itemOptionGr) {
+				return {
+					name: 'variables.' + itemOptionGr.getUniqueValue(),
+					label: itemOptionGr.getValue('question_text'),
+					type: 'reference',
+					reference: itemOptionGr.reference.toString()
+				};
+			},
+			'9': function (itemOptionGr) { // Date
+				return {
+					name: 'variables.' + itemOptionGr.getUniqueValue(),
+					label: itemOptionGr.getValue('question_text'),
+					type: 'date'
+				};
+			},
+			'10': function (itemOptionGr) { // Date/Time
+				return {
+					name: 'variables.' + itemOptionGr.getUniqueValue(),
+					label: itemOptionGr.getValue('question_text'),
+					type: 'datetime'
+				};
+			},
+			'16': StringHandler, // Wide Single Line Text
+			'23': function (itemOptionGr) { // HTML
+				return {
+					name: 'variables.' + itemOptionGr.getUniqueValue(),
+					label: itemOptionGr.getValue('question_text'),
+					type: 'html'
+				};
+			},
+			'25': StringHandler,
+			'26': function (itemOptionGr) { // Email
+				return {
+					name: 'variables.' + itemOptionGr.getUniqueValue(),
+					label: itemOptionGr.getValue('question_text'),
+					type: 'email'
+				};
+			},
+			'27': StringHandler, // URL
+			'31': StaticReferenceHandler('sys_user'), // Requested For
+			'33': StaticReferenceHandler('sys_attachment'), // Attachment
+			'40': StaticReferenceHandler('sys_db_object'), // Table Name
+		};
+
+		this._itemNameCache = {};
+
+		function StringHandler(itemOptionGr) {
+			return {
+				name: 'variables.' + itemOptionGr.getUniqueValue(),
+				label: itemOptionGr.getValue('question_text'),
+				type: 'string',
+				defaultValue: itemOptionGr.default_value.toString()
+			};
+		}
+
+		function StaticReferenceHandler(table) {
+			return function (itemOptionGr) {
+				return {
+					name: 'variables.' + itemOptionGr.getUniqueValue(),
+					label: itemOptionGr.getValue('question_text'),
+					type: 'reference',
+					reference: table
+				};
+			};
+		}
+	},
+
+	/**
+	 * @param {(GlideRecordGenerated & sc_task)|(GlideRecordGenerated & sc_req_item)} taskGr
+	 * @param {GUID} catItemSysID
+	 */
+	_getItemNameMap: function (taskGr, catItemSysID) {
+		var cacheID = catItemSysID;
+		if (!cacheID) {
+			throw new Error('Unable to retrieve variable name if catItemSysID is empty!');
+		}
+
+		if (cacheID in this._itemNameCache) {
+			return this._itemNameCache[cacheID];
+		}
+
+		var itemNameCache = {};
+		var elements = taskGr.variables.getElements();
+		for (var i = 0; i < elements.length; i++) {
+			var element = elements[i];
+			if (!element.isMultiRow()) {
+				itemNameCache[element.getQuestion().id] = element.getName();
+			}
+		}
+
+		this._itemNameCache[cacheID] = itemNameCache;
+		return itemNameCache;
+	},
+
+	/**
+	 * @param {(GlideRecordGenerated & sc_task)|(GlideRecordGenerated & sc_req_item)} taskGr
+	 * @param {GUID} catItemSysID
+	 * @param {string} encodedValues
+	 * @returns {Array}
+	 */
+	getItemValues: function (taskGr, catItemSysID, encodedValues) {
+		var nameMap = this._getItemNameMap(taskGr, catItemSysID);
+
+		var eq = new GlideQueryString(taskGr.getRecordClassName(), encodedValues);
+		eq.deserialize();
+
+		var values = {};
+		var terms = eq.getTerms();
+		for (var i = 0; i < terms.size(); i++) {
+			var term = terms.get(i);
+			var questionSysID = String(term.getTermField()).split('variables.')[1];
+			var questionName = questionSysID && nameMap[questionSysID];
+			if (questionName) {
+				values[questionName] = term.getValue();
+			}
+		}
+
+		return values;
+	},
+
+	/**
+	 * @param {(GlideRecordGenerated & sc_cat_item)|(GlideRecordGenerated & item_option_new_set)} anyGr
+	 */
+	getItemSchema: function (anyGr) {
+		var itemOptionGr = new GlideRecord('item_option_new');
+
+		var itemClassName = anyGr.getRecordClassName();
+		if (this.cat_item_tables.indexOf(itemClassName) != -1) {
+			itemOptionGr.addQuery('cat_item', anyGr.sys_id);
+		} else if (this.variable_set_tables.indexOf(itemClassName) != -1) {
+			itemOptionGr.addQuery('variable_set', anyGr.sys_id);
+		} else {
+			throw new Error("Expected input of type 'Catalog Item' or 'Variable Set' but got '" + itemClassName + "'!");
+		}
+
+		itemOptionGr.addQuery('type', 'IN', Object.keys(this.handlers));
+		itemOptionGr.setLimit(this.item_limit);
+		itemOptionGr.query();
+
+		var schema = [];
+		while (itemOptionGr.next()) {
+			schema.push(this.handlers[itemOptionGr.getValue('type')](itemOptionGr));
+		}
+
+		return schema;
+	},
+
+	type: 'scp_vars_Util'
+};]]></script>
+        <sys_class_name>sys_script_include</sys_class_name>
+        <sys_created_by>markus.kraus</sys_created_by>
+        <sys_created_on>2024-11-15 11:47:12</sys_created_on>
+        <sys_id>012074c783b916100971c810feaad383</sys_id>
+        <sys_mod_count>16</sys_mod_count>
+        <sys_name>scp_vars_Util</sys_name>
+        <sys_package display_value="Service Catalog+ Set Variable Values" source="fc10b8cf837916100971c810feaad3da">fc10b8cf837916100971c810feaad3da</sys_package>
+        <sys_policy/>
+        <sys_scope display_value="Service Catalog+ Set Variable Values">fc10b8cf837916100971c810feaad3da</sys_scope>
+        <sys_update_name>sys_script_include_012074c783b916100971c810feaad383</sys_update_name>
+        <sys_updated_by>markus.kraus</sys_updated_by>
+        <sys_updated_on>2024-11-15 17:37:30</sys_updated_on>
+    </sys_script_include>
+    <sys_es_latest_script action="INSERT_OR_UPDATE">
+        <id>012074c783b916100971c810feaad383</id>
+        <sys_created_by>markus.kraus</sys_created_by>
+        <sys_created_on>2024-11-15 11:47:11</sys_created_on>
+        <sys_id>d291b8cf83b916100971c810feaad33c</sys_id>
+        <sys_mod_count>0</sys_mod_count>
+        <sys_updated_by>markus.kraus</sys_updated_by>
+        <sys_updated_on>2024-11-15 11:47:11</sys_updated_on>
+        <table>sys_script_include</table>
+        <use_es_latest>false</use_es_latest>
+    </sys_es_latest_script>
+</record_update>
